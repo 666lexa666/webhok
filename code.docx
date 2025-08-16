@@ -1,0 +1,80 @@
+const { TelegramClient } = require('telegram');
+const { StringSession } = require('telegram/sessions');
+const { NewMessage } = require('telegram/events');
+const axios = require('axios');
+const input = require('input');
+require('dotenv').config(); // читаем .env из той же папки
+
+const apiId = 9899010;
+const apiHash = '9498cec89c19cd317c32e23411e23016';
+const stringSession = new StringSession('');
+
+const { FORWARD_URL, FORWARD_USERNAME, FORWARD_PASSWORD, BOT_USERNAME } = process.env;
+
+(async () => {
+    console.log('Запуск Telegram клиента...');
+
+    const client = new TelegramClient(stringSession, apiId, apiHash, {
+        connectionRetries: 5
+    });
+
+    await client.start({
+        phoneNumber: async () => await input.text('Введите номер телефона: '),
+        password: async () => await input.text('Введите 2FA пароль (если есть): '),
+        phoneCode: async () => await input.text('Введите код из Telegram: '),
+        onError: (err) => console.log(err),
+    });
+
+    console.log('✅ Авторизация успешна!');
+    console.log('Сессия для повторного входа:', client.session.save());
+
+    client.addEventHandler(async (event) => {
+        const message = event.message;
+        const sender = await message.getSender();
+
+        if (sender && sender.username === BOT_USERNAME) {
+            const text = message.message;
+            console.log(`📩 Сообщение:\n${text}`);
+
+            const terminalMatch = text.match(/^Терминал\s+(.+)/m);
+            const timeMatch = text.match(/В\s+(\d{2}:\d{2}:\d{2})\s+поступила оплата/i);
+            const sumMatch = text.match(/на сумму\s+([\d\s]+)руб\.\s+(\d{2})\s+коп\./i);
+            const idMatch = text.match(/Номер операции:\s+([^\n]+)/i);
+
+            if (terminalMatch && timeMatch && sumMatch && idMatch) {
+                const LMI_SHOP_ID = terminalMatch[1].trim();
+                const LMI_SYS_PAYMENT_DATE = new Date().toISOString().split('T')[0] + ' ' + timeMatch[1];
+                const LMI_PAYMENT_AMOUNT = `${sumMatch[1].replace(/\s/g, '')}.${sumMatch[2]}`;
+                const LMI_CURRENCY = 'RUB';
+                const LMI_SYS_PAYMENT_ID = idMatch[1].trim();
+
+                const payload = {
+                    LMI_PAYMENT_AMOUNT,
+                    LMI_CURRENCY,
+                    LMI_SYS_PAYMENT_DATE,
+                    LMI_SYS_PAYMENT_ID,
+                    LMI_SHOP_ID
+                };
+
+                try {
+                    await axios.post(FORWARD_URL, payload, {
+                        auth: {
+                            username: FORWARD_USERNAME,
+                            password: FORWARD_PASSWORD
+                        },
+                        headers: {
+                            'Content-Type': 'application/json'
+                        }
+                    });
+                    console.log('✅ Запрос переслан на ludik.club', payload);
+                } catch (error) {
+                    console.error('❌ Ошибка пересылки на ludik.club:', error.response?.data || error.message);
+                }
+            } else {
+                console.log('⚠ Не удалось распарсить сообщение.');
+            }
+        }
+    }, new NewMessage({}));
+
+    await client.runUntilDisconnected();
+})();
