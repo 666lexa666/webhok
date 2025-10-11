@@ -9,9 +9,9 @@ app.use(bodyParser.json());
 const TELEGRAM_TOKEN = '7527450434:AAGT8a04U7WV09BbayPcrG_Z9qNIjXO92Xc';
 const TELEGRAM_CHAT_ID = '-1002834907441';
 
-const FORWARD_URL = 'https://ludik.club/your-endpoint';
-const FORWARD_USERNAME = 'username';
-const FORWARD_PASSWORD = 'password';
+const FORWARD_URL = 'https://ludik.club/api/v1/external/webhooks/Hu9gLMIS9ImUYkA';
+const FORWARD_USERNAME = 'Yuriy_063';
+const FORWARD_PASSWORD = 'h7zWcnVGjeetiEa';
 // ------------------------------------------------- //
 
 app.post('/webhook', async (req, res) => {
