@@ -6,12 +6,12 @@ const app = express();
 app.use(bodyParser.json());
 
 // ------------------- Настройки ------------------- //
-const TELEGRAM_TOKEN = '7527450434:AAGT8a04U7WV09BbayPcrG_Z9qNIjXO92Xc';
-const TELEGRAM_CHAT_ID = '-1002834907441';
+const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
-const FORWARD_URL = 'https://ludik.club/api/v1/external/webhooks/Hu9gLMIS9ImUYkA';
-const FORWARD_USERNAME = 'Yuriy_063';
-const FORWARD_PASSWORD = 'h7zWcnVGjeetiEa';
+const FORWARD_URL = process.env.FORWARD_URL;
+const FORWARD_USERNAME = process.env.FORWARD_USERNAME;
+const FORWARD_PASSWORD = process.env.FORWARD_PASSWORD;
 // ------------------------------------------------- //
 
 app.post('/webhook', async (req, res) => {
