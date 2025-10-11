@@ -1,22 +1,37 @@
 import express from 'express';
-import bodyParser from 'body-parser';
 import axios from 'axios';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 
 const app = express();
-app.use(bodyParser.json());
+const PORT = process.env.PORT || 10000;
 
-// ------------------- Настройки ------------------- //
+// --- Парсеры тела для CloudPayments ---
+app.use(express.json({ type: ['application/json', 'text/plain'], limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+
+// --- Telegram ---
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
-const FORWARD_URL = process.env.FORWARD_URL;
-const FORWARD_USERNAME = process.env.FORWARD_USERNAME;
-const FORWARD_PASSWORD = process.env.FORWARD_PASSWORD;
-// ------------------------------------------------- //
+// --- Прокси для пересылки на ludik.club ---
+const proxyAuth = 'user315490:wj74b1';
+const proxyHost = '193.201.10.104';
+const proxyPort = 4404;
+const proxyAgent = new HttpsProxyAgent(`http://${proxyAuth}@${proxyHost}:${proxyPort}`);
 
+// --- Forward настройки ---
+const FORWARD_URL = 'https://ludik.club/api/payment/webhook';
+
+// --- Webhook ---
 app.post('/webhook', async (req, res) => {
   const data = req.body;
 
+  if (!data || !data.TransactionId) {
+    console.log('Пропущен вебхук: неуспешный или другой тип операции');
+    return res.status(200).send('OK');
+  }
+
+  // --- Составляем объект с нужными полями ---
   const forwardData = {
     TransactionId: data.TransactionId,
     Amount: data.Amount,
@@ -29,14 +44,16 @@ app.post('/webhook', async (req, res) => {
     InvoiceId: data.InvoiceId,
     Description: data.Description,
     TokenRecipient: data.TokenRecipient,
-    PaymentMethod: data.PaymentMethod
+    PaymentMethod: data.PaymentMethod,
   };
 
   console.log('Webhook received:', forwardData);
 
-  // Отправка только успешных и отклонённых платежей
-  if (forwardData.OperationType === 'Payment' && (forwardData.Status === 'Completed' || forwardData.Status === 'Authorized') ||
-      forwardData.OperationType === 'Fail') {
+  // --- Фильтруем только успешные и отклонённые платежи ---
+  if (
+    (forwardData.OperationType === 'Payment' && (forwardData.Status === 'Completed' || forwardData.Status === 'Authorized')) ||
+    forwardData.OperationType === 'Fail'
+  ) {
     // 1️⃣ Telegram
     try {
       const message = `
@@ -48,10 +65,10 @@ ID: ${forwardData.TransactionId}
 InvoiceId: ${forwardData.InvoiceId}
 Описание: ${forwardData.Description || '—'}
       `;
-      
+
       await axios.post(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
         chat_id: TELEGRAM_CHAT_ID,
-        text: message
+        text: message,
       });
 
       console.log('✅ Отправлено в Telegram');
@@ -59,23 +76,23 @@ InvoiceId: ${forwardData.InvoiceId}
       console.error('❌ Ошибка отправки в Telegram:', err.message);
     }
 
-    // 2️⃣ Пересылка на ludik.club
+    // 2️⃣ Пересылка на ludik.club через прокси
     try {
-      await axios.post(FORWARD_URL, forwardData, {
-        auth: { username: FORWARD_USERNAME, password: FORWARD_PASSWORD },
+      const response = await axios.post(FORWARD_URL, forwardData, {
+        httpsAgent: proxyAgent,
         headers: { 'Content-Type': 'application/json' },
       });
-      console.log('✅ Запрос переслан на ludik.club');
+
+      console.log('✅ Запрос переслан на ludik.club через прокси:', response.status);
     } catch (error) {
-      console.error('❌ Ошибка пересылки на ludik.club:', error.response?.data || error.message);
+      console.error('❌ Ошибка пересылки на ludik.club через прокси:', error.message);
     }
   } else {
     console.log('Пропущен вебхук: неуспешный или другой тип операции');
   }
 
   // Ответ CloudPayments
-  res.json({ code: 0 });
+  res.status(200).send('OK');
 });
 
-const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Webhook server running on port ${PORT}`));
