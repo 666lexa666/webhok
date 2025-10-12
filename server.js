@@ -92,7 +92,7 @@ InvoiceId: ${forwardData.InvoiceId}
   }
 
   // Ответ CloudPayments
-  res.status(200).send('OK');
+  res.status(200).json({ code: 0 });
 });
 
 app.listen(PORT, () => console.log(`Webhook server running on port ${PORT}`));
