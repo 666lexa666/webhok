@@ -92,7 +92,7 @@ InvoiceId: ${forwardData.InvoiceId}
     // --- 2️⃣ Обновляем MongoDB ---
     try {
       const newStatus = isSuccess ? 'success' : 'canceled';
-
+    
       const updated = await Transaction.findOneAndUpdate(
         { operation_id: forwardData.TransactionId },
         {
@@ -102,11 +102,12 @@ InvoiceId: ${forwardData.InvoiceId}
             currency: forwardData.Currency,
             description: forwardData.Description,
             updatedAt: new Date(),
+            dateUp: new Date(), // 🕒 Добавили обновление времени
           },
         },
         { new: true }
       );
-
+    
       if (updated) {
         console.log(`✅ Обновлён статус транзакции ${updated.operation_id} → ${newStatus}`);
       } else {
