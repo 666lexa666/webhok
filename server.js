@@ -1,40 +1,129 @@
+import express from 'express';
+import axios from 'axios';
+import mongoose from 'mongoose';
+
+const app = express();
+const PORT = process.env.PORT || 10000;
+
+// --- Парсеры тела ---
+app.use(express.json({ type: ['application/json', 'text/plain'], limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+
+// --- Telegram ---
+const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+
+// --- MongoDB ---
+const MONGO_URI = process.env.MONGO_URI;
+
+// Подключаемся к MongoDB
+mongoose
+  .connect(MONGO_URI, { dbName: 'test' })
+  .then(() => console.log('✅ Connected to MongoDB'))
+  .catch((err) => console.error('❌ MongoDB connection error:', err));
+
+// Схема транзакции
+const transactionSchema = new mongoose.Schema({
+  operation_id: String,
+  amount: String, // ✅ теперь строка
+  currency: String,
+  description: String,
+  status: String,
+  updatedAt: { type: Date, default: Date.now },
+  dateUp: { type: Date, default: Date.now },
+});
+
+const Transaction = mongoose.model('transactions', transactionSchema);
+
+// --- Webhook ---
 app.post('/webhook', async (req, res) => {
-  try {
-    const body = req.body;
-    const transactionId = String(body.TransactionId); // ✅ Приводим к строке
+  console.log('🧠 Тело запроса:', JSON.stringify(req.body, null, 2));
 
-    console.log('📩 Webhook received:', body);
+  const data = req.body;
 
-    // --- Ищем транзакцию по строковому operation_id ---
-    const transaction = await Transaction.findOne({ operation_id: transactionId });
+  if (!data || !data.TransactionId) {
+    console.log('⚠️ Пропущен вебхук: нет TransactionId');
+    return res.status(200).send('OK');
+  }
 
-    if (!transaction) {
-      console.log(`⚠️ Транзакция ${transactionId} не найдена в базе`);
-      return res.status(200).send('OK');
+  // 🔧 Приводим данные к строкам
+  const forwardData = {
+    TransactionId: String(data.TransactionId),
+    Amount: String(data.Amount),
+    Currency: data.Currency || '',
+    PaymentAmount: String(data.PaymentAmount || ''),
+    PaymentCurrency: data.PaymentCurrency || '',
+    DateTime: data.DateTime || '',
+    Status: data.Status || '',
+    OperationType: data.OperationType || '',
+    InvoiceId: data.InvoiceId || '',
+    Description: data.Description || '',
+    TokenRecipient: data.TokenRecipient || '',
+    PaymentMethod: data.PaymentMethod || '',
+  };
+
+  console.log('📩 Webhook received:', forwardData);
+
+  const isSuccess =
+    forwardData.OperationType === 'Payment' &&
+    (forwardData.Status === 'Completed' || forwardData.Status === 'Authorized');
+  const isFail = forwardData.OperationType === 'Fail' || forwardData.Status === 'Canceled';
+
+  if (isSuccess || isFail) {
+    // --- 1️⃣ Telegram ---
+    try {
+      const message = `
+💳 Платёж
+ID: ${forwardData.TransactionId}
+Сумма: ${forwardData.Amount} ${forwardData.Currency}
+Статус: ${forwardData.Status}
+Тип: ${forwardData.OperationType}
+InvoiceId: ${forwardData.InvoiceId}
+Описание: ${forwardData.Description || '—'}
+      `;
+
+      await axios.post(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
+        chat_id: TELEGRAM_CHAT_ID,
+        text: message,
+      });
+
+      console.log('✅ Отправлено в Telegram');
+    } catch (err) {
+      console.error('❌ Ошибка отправки в Telegram:', err.message);
     }
 
-    // --- Обновляем статус ---
-    transaction.status = body.Status || 'Unknown';
-    transaction.dateUp = new Date();
-    await transaction.save();
+    // --- 2️⃣ Обновляем MongoDB ---
+    try {
+      const newStatus = isSuccess ? 'success' : 'canceled';
 
-    console.log(`✅ Транзакция ${transactionId} обновлена: ${transaction.status}`);
+      const updated = await Transaction.findOneAndUpdate(
+        { operation_id: forwardData.TransactionId },
+        {
+          $set: {
+            status: newStatus,
+            amount: forwardData.Amount,
+            currency: forwardData.Currency,
+            description: forwardData.Description,
+            updatedAt: new Date(),
+            dateUp: new Date(),
+          },
+        },
+        { new: true }
+      );
 
-    // --- Отправляем уведомление в Telegram ---
-    const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
-    const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
-
-    const msg = `💰 Статус платежа обновлён\n\n🆔 ID: ${transactionId}\n📧 Email: ${transaction.customer_email || '—'}\n💳 Статус: ${transaction.status}`;
-    await axios.post(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
-      chat_id: TELEGRAM_CHAT_ID,
-      text: msg,
-      parse_mode: 'HTML',
-    });
-
-    console.log('✅ Отправлено в Telegram');
-    res.status(200).send('OK');
-  } catch (err) {
-    console.error('❌ Ошибка при обработке webhook:', err);
-    res.status(500).send('Error');
+      if (updated) {
+        console.log(`✅ Обновлён статус транзакции ${updated.operation_id} → ${newStatus}`);
+      } else {
+        console.log(`⚠️ Транзакция ${forwardData.TransactionId} не найдена в базе`);
+      }
+    } catch (err) {
+      console.error('❌ Ошибка обновления MongoDB:', err.message);
+    }
+  } else {
+    console.log('ℹ️ Пропущен вебхук: неуспешная операция');
   }
+
+  res.status(200).json({ code: 0 });
 });
+
+app.listen(PORT, () => console.log(`🚀 Webhook server running on port ${PORT}`));
