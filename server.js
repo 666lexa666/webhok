@@ -24,20 +24,20 @@ mongoose
 
 // Схема транзакции
 const transactionSchema = new mongoose.Schema({
-  operation_id: String,
+  operation_id: String, // ✅ храним как строку
   amount: Number,
   currency: String,
   description: String,
   status: String, // success | canceled | pending
   updatedAt: { type: Date, default: Date.now },
-  dateUp: { type: Date, default: Date.now }, // 🕒 добавили поле для даты обновления
+  dateUp: { type: Date, default: Date.now },
 });
 
 const Transaction = mongoose.model('transactions', transactionSchema);
 
 // --- Webhook ---
 app.post('/webhook', async (req, res) => {
-  console.log('🧠 Тело запроса:', JSON.stringify(req.body, null, 2)); // логируем всё тело запроса
+  console.log('🧠 Тело запроса:', JSON.stringify(req.body, null, 2));
 
   const data = req.body;
 
@@ -63,7 +63,6 @@ app.post('/webhook', async (req, res) => {
 
   console.log('📩 Webhook received:', forwardData);
 
-  // Определяем успешность
   const isSuccess =
     forwardData.OperationType === 'Payment' &&
     (forwardData.Status === 'Completed' || forwardData.Status === 'Authorized');
@@ -97,7 +96,7 @@ InvoiceId: ${forwardData.InvoiceId}
       const newStatus = isSuccess ? 'success' : 'canceled';
 
       const updated = await Transaction.findOneAndUpdate(
-        { operation_id: forwardData.TransactionId },
+        { operation_id: String(forwardData.TransactionId) }, // ✅ приводим к строке
         {
           $set: {
             status: newStatus,
@@ -105,7 +104,7 @@ InvoiceId: ${forwardData.InvoiceId}
             currency: forwardData.Currency,
             description: forwardData.Description,
             updatedAt: new Date(),
-            dateUp: new Date(), // 🕒 обновляем время
+            dateUp: new Date(),
           },
         },
         { new: true }
