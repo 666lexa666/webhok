@@ -16,7 +16,6 @@ const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 // --- MongoDB ---
 const MONGO_URI = process.env.MONGO_URI;
 
-// Подключаемся к MongoDB
 mongoose
   .connect(MONGO_URI, { dbName: 'test' })
   .then(() => console.log('✅ Connected to MongoDB'))
@@ -24,11 +23,11 @@ mongoose
 
 // Схема транзакции
 const transactionSchema = new mongoose.Schema({
-  operation_id: String,
-  amount: String, // ✅ теперь строка
+  operation_id: mongoose.Schema.Types.Mixed, // теперь можно сохранять как строку или число
+  amount: Number,
   currency: String,
   description: String,
-  status: String,
+  status: String, // success | canceled | pending
   updatedAt: { type: Date, default: Date.now },
   dateUp: { type: Date, default: Date.now },
 });
@@ -46,24 +45,24 @@ app.post('/webhook', async (req, res) => {
     return res.status(200).send('OK');
   }
 
-  // 🔧 Приводим данные к строкам
   const forwardData = {
-    TransactionId: String(data.TransactionId),
-    Amount: String(data.Amount),
-    Currency: data.Currency || '',
-    PaymentAmount: String(data.PaymentAmount || ''),
-    PaymentCurrency: data.PaymentCurrency || '',
-    DateTime: data.DateTime || '',
-    Status: data.Status || '',
-    OperationType: data.OperationType || '',
-    InvoiceId: data.InvoiceId || '',
-    Description: data.Description || '',
-    TokenRecipient: data.TokenRecipient || '',
-    PaymentMethod: data.PaymentMethod || '',
+    TransactionId: data.TransactionId,
+    Amount: data.Amount,
+    Currency: data.Currency,
+    PaymentAmount: data.PaymentAmount,
+    PaymentCurrency: data.PaymentCurrency,
+    DateTime: data.DateTime,
+    Status: data.Status,
+    OperationType: data.OperationType,
+    InvoiceId: data.InvoiceId,
+    Description: data.Description,
+    TokenRecipient: data.TokenRecipient,
+    PaymentMethod: data.PaymentMethod,
   };
 
   console.log('📩 Webhook received:', forwardData);
 
+  // Определяем успешность
   const isSuccess =
     forwardData.OperationType === 'Payment' &&
     (forwardData.Status === 'Completed' || forwardData.Status === 'Authorized');
@@ -81,12 +80,10 @@ ID: ${forwardData.TransactionId}
 InvoiceId: ${forwardData.InvoiceId}
 Описание: ${forwardData.Description || '—'}
       `;
-
       await axios.post(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
         chat_id: TELEGRAM_CHAT_ID,
         text: message,
       });
-
       console.log('✅ Отправлено в Telegram');
     } catch (err) {
       console.error('❌ Ошибка отправки в Telegram:', err.message);
@@ -97,7 +94,13 @@ InvoiceId: ${forwardData.InvoiceId}
       const newStatus = isSuccess ? 'success' : 'canceled';
 
       const updated = await Transaction.findOneAndUpdate(
-        { operation_id: forwardData.TransactionId },
+        {
+          $or: [
+            { operation_id: forwardData.TransactionId },
+            { operation_id: Number(forwardData.TransactionId) },
+            { operation_id: String(forwardData.TransactionId) },
+          ],
+        },
         {
           $set: {
             status: newStatus,
