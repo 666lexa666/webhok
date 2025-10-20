@@ -30,12 +30,15 @@ const transactionSchema = new mongoose.Schema({
   description: String,
   status: String, // success | canceled | pending
   updatedAt: { type: Date, default: Date.now },
+  dateUp: { type: Date, default: Date.now }, // 🕒 добавили поле для даты обновления
 });
 
 const Transaction = mongoose.model('transactions', transactionSchema);
 
 // --- Webhook ---
 app.post('/webhook', async (req, res) => {
+  console.log('🧠 Тело запроса:', JSON.stringify(req.body, null, 2)); // логируем всё тело запроса
+
   const data = req.body;
 
   if (!data || !data.TransactionId) {
@@ -92,7 +95,7 @@ InvoiceId: ${forwardData.InvoiceId}
     // --- 2️⃣ Обновляем MongoDB ---
     try {
       const newStatus = isSuccess ? 'success' : 'canceled';
-    
+
       const updated = await Transaction.findOneAndUpdate(
         { operation_id: forwardData.TransactionId },
         {
@@ -102,12 +105,12 @@ InvoiceId: ${forwardData.InvoiceId}
             currency: forwardData.Currency,
             description: forwardData.Description,
             updatedAt: new Date(),
-            dateUp: new Date(), // 🕒 Добавили обновление времени
+            dateUp: new Date(), // 🕒 обновляем время
           },
         },
         { new: true }
       );
-    
+
       if (updated) {
         console.log(`✅ Обновлён статус транзакции ${updated.operation_id} → ${newStatus}`);
       } else {
