@@ -1,11 +1,11 @@
 import express from 'express';
 import axios from 'axios';
-import { HttpsProxyAgent } from 'https-proxy-agent';
+import mongoose from 'mongoose';
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-// --- Парсеры тела для CloudPayments ---
+// --- Парсеры тела ---
 app.use(express.json({ type: ['application/json', 'text/plain'], limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
@@ -13,25 +13,36 @@ app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
 
-// --- Прокси для пересылки на ludik.club ---
-const proxyAuth = 'user315490:wj74b1';
-const proxyHost = '193.201.10.104';
-const proxyPort = 4404;
-const proxyAgent = new HttpsProxyAgent(`http://${proxyAuth}@${proxyHost}:${proxyPort}`);
+// --- MongoDB ---
+const MONGO_URI = process.env.MONGO_URI;
 
-// --- Forward настройки ---
-const FORWARD_URL = 'https://ludik.club/api/payment/webhook';
+// Подключаемся к MongoDB
+mongoose
+  .connect(MONGO_URI, { dbName: 'test' })
+  .then(() => console.log('✅ Connected to MongoDB'))
+  .catch((err) => console.error('❌ MongoDB connection error:', err));
+
+// Схема транзакции
+const transactionSchema = new mongoose.Schema({
+  operation_id: String,
+  amount: Number,
+  currency: String,
+  description: String,
+  status: String, // success | canceled | pending
+  updatedAt: { type: Date, default: Date.now },
+});
+
+const Transaction = mongoose.model('transactions', transactionSchema);
 
 // --- Webhook ---
 app.post('/webhook', async (req, res) => {
   const data = req.body;
 
   if (!data || !data.TransactionId) {
-    console.log('Пропущен вебхук: неуспешный или другой тип операции');
+    console.log('⚠️ Пропущен вебхук: нет TransactionId');
     return res.status(200).send('OK');
   }
 
-  // --- Составляем объект с нужными полями ---
   const forwardData = {
     TransactionId: data.TransactionId,
     Amount: data.Amount,
@@ -47,17 +58,19 @@ app.post('/webhook', async (req, res) => {
     PaymentMethod: data.PaymentMethod,
   };
 
-  console.log('Webhook received:', forwardData);
+  console.log('📩 Webhook received:', forwardData);
 
-  // --- Фильтруем только успешные и отклонённые платежи ---
-  if (
-    (forwardData.OperationType === 'Payment' && (forwardData.Status === 'Completed' || forwardData.Status === 'Authorized')) ||
-    forwardData.OperationType === 'Fail'
-  ) {
-    // 1️⃣ Telegram
+  // Определяем успешность
+  const isSuccess =
+    forwardData.OperationType === 'Payment' &&
+    (forwardData.Status === 'Completed' || forwardData.Status === 'Authorized');
+  const isFail = forwardData.OperationType === 'Fail' || forwardData.Status === 'Canceled';
+
+  if (isSuccess || isFail) {
+    // --- 1️⃣ Telegram ---
     try {
       const message = `
-💳 Платеж
+💳 Платёж
 ID: ${forwardData.TransactionId}
 Сумма: ${forwardData.Amount} ${forwardData.Currency}
 Статус: ${forwardData.Status}
@@ -76,23 +89,37 @@ InvoiceId: ${forwardData.InvoiceId}
       console.error('❌ Ошибка отправки в Telegram:', err.message);
     }
 
-    // 2️⃣ Пересылка на ludik.club через прокси
+    // --- 2️⃣ Обновляем MongoDB ---
     try {
-      const response = await axios.post(FORWARD_URL, forwardData, {
-        httpsAgent: proxyAgent,
-        headers: { 'Content-Type': 'application/json' },
-      });
+      const newStatus = isSuccess ? 'success' : 'canceled';
 
-      console.log('✅ Запрос переслан на ludik.club через прокси:', response.status);
-    } catch (error) {
-      console.error('❌ Ошибка пересылки на ludik.club через прокси:', error.message);
+      const updated = await Transaction.findOneAndUpdate(
+        { operation_id: forwardData.TransactionId },
+        {
+          $set: {
+            status: newStatus,
+            amount: forwardData.Amount,
+            currency: forwardData.Currency,
+            description: forwardData.Description,
+            updatedAt: new Date(),
+          },
+        },
+        { new: true }
+      );
+
+      if (updated) {
+        console.log(`✅ Обновлён статус транзакции ${updated.operation_id} → ${newStatus}`);
+      } else {
+        console.log(`⚠️ Транзакция ${forwardData.TransactionId} не найдена в базе`);
+      }
+    } catch (err) {
+      console.error('❌ Ошибка обновления MongoDB:', err.message);
     }
   } else {
-    console.log('Пропущен вебхук: неуспешный или другой тип операции');
+    console.log('ℹ️ Пропущен вебхук: неуспешная операция');
   }
 
-  // Ответ CloudPayments
   res.status(200).json({ code: 0 });
 });
 
-app.listen(PORT, () => console.log(`Webhook server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Webhook server running on port ${PORT}`));
